@@ -64,6 +64,7 @@ function ExpTracker() {
 
   // 6번: 측정 중
   const [isRunning, setIsRunning] = useState(false)
+  const [isPaused, setIsPaused] = useState(false)
   const [startTime, setStartTime] = useState(null)
   const [startExp, setStartExp] = useState(null)
   const [elapsedSec, setElapsedSec] = useState(0)
@@ -91,6 +92,8 @@ function ExpTracker() {
   const cropCanvasCacheRef = useRef(new Map())
   // PIP 창에 표시할 단계/버튼 상태 (PIP이 먼저 열려도 단계별 UI 표시)
   const pipStateRef = useRef({ step: 2, hint: '', canReadExp: false, canOk: false, canStart: false, currentExp: null, confirmedExp: null, isRunning: false })
+  // PIP 일시정지 버튼: 클릭 시점에 이 ref를 읽어 PAUSE/RESUME 전달 (타이밍 이슈 방지)
+  const pipPauseResumeActionRef = useRef('PAUSE')
   // 자동 경험치 읽기/OK 플래그 (다시 측정하기 전용)
   const autoReadDoneRef = useRef(false)
   const autoOkDoneRef = useRef(false)
@@ -729,6 +732,17 @@ function ExpTracker() {
 
   const onStart = () => {
     openPip()
+    // 기존 타이머/OCR 정리 (중복·캐시 방지: 이전에 남은 interval이 있으면 제거)
+    if (intervalRef.current) clearInterval(intervalRef.current)
+    intervalRef.current = null
+    if (timerRef.current) clearInterval(timerRef.current)
+    timerRef.current = null
+    if (ocrRafIdRef.current && videoRef.current?.cancelVideoFrameCallback) {
+      videoRef.current.cancelVideoFrameCallback(ocrRafIdRef.current)
+      ocrRafIdRef.current = null
+    }
+    ocrLoopRunningRef.current = false
+
     // 스냅샷 메타가 없으면 비디오 기준으로 생성
     const ensureCaptureMeta = () => {
       const video = videoRef.current
@@ -793,6 +807,7 @@ function ExpTracker() {
     setStartTime(Date.now())
     setStartExp(confirmedExp)
     setIsRunning(true)
+    setIsPaused(false)
     setElapsedSec(0)
     setExpGained(0)
     setExpPerHour(0)
@@ -868,6 +883,87 @@ function ExpTracker() {
     }
   }
 
+  // 일시정지: 타이머 + OCR 둘 다 멈춤. 재개 시 그대로 이어서 측정(일시정지 동안 오른 경험치도 재개 후 첫 OCR에 반영됨).
+  const onPause = () => {
+    if (intervalRef.current) clearInterval(intervalRef.current)
+    intervalRef.current = null
+    if (timerRef.current) clearInterval(timerRef.current)
+    timerRef.current = null
+    if (ocrRafIdRef.current && videoRef.current?.cancelVideoFrameCallback) {
+      videoRef.current.cancelVideoFrameCallback(ocrRafIdRef.current)
+      ocrRafIdRef.current = null
+    }
+    ocrLoopRunningRef.current = false
+    setIsPaused(true)
+  }
+
+  const onResume = () => {
+    // 재개 시 기존 타이머/OCR 정리 후 새로 시작 (연타·중복 클릭 시 타이머 중복 방지)
+    if (intervalRef.current) clearInterval(intervalRef.current)
+    intervalRef.current = null
+    if (timerRef.current) clearInterval(timerRef.current)
+    timerRef.current = null
+    if (ocrRafIdRef.current && videoRef.current?.cancelVideoFrameCallback) {
+      videoRef.current.cancelVideoFrameCallback(ocrRafIdRef.current)
+      ocrRafIdRef.current = null
+    }
+    ocrLoopRunningRef.current = false
+
+    setIsPaused(false)
+    const tick = () => setElapsedSec((s) => s + 1)
+    timerRef.current = setInterval(tick, 1000)
+
+    const applyOcrResult = (result) => {
+      if (!result) return
+      if (result.exp != null && result.exp !== lastOcrResultRef.current.exp) {
+        lastOcrResultRef.current.exp = result.exp
+        setCurrentExp(result.exp)
+      }
+      if (result.percent !== lastOcrResultRef.current.percent) {
+        lastOcrResultRef.current.percent = result.percent
+        setCurrentExpPercent(result.percent)
+      }
+    }
+
+    const ocrLoop = async () => {
+      if (!ocrLoopRunningRef.current) return
+      const now = performance.now()
+      if (!ocrInFlightRef.current && now - lastOcrTimeRef.current >= 1000) {
+        ocrInFlightRef.current = true
+        lastOcrTimeRef.current = now
+        try {
+          const result = await captureAndOcr()
+          applyOcrResult(result)
+        } finally {
+          ocrInFlightRef.current = false
+        }
+      }
+      if (videoRef.current?.requestVideoFrameCallback) {
+        ocrRafIdRef.current = videoRef.current.requestVideoFrameCallback(ocrLoop)
+      }
+    }
+
+    ocrLoopRunningRef.current = true
+    lastOcrTimeRef.current = 0
+    ocrInFlightRef.current = false
+    if (videoRef.current?.requestVideoFrameCallback) {
+      ocrRafIdRef.current = videoRef.current.requestVideoFrameCallback(ocrLoop)
+    } else {
+      const ocrInterval = async () => {
+        if (!ocrLoopRunningRef.current || ocrInFlightRef.current) return
+        ocrInFlightRef.current = true
+        try {
+          const result = await captureAndOcr()
+          applyOcrResult(result)
+        } finally {
+          ocrInFlightRef.current = false
+        }
+      }
+      ocrInterval()
+      intervalRef.current = setInterval(ocrInterval, 1000)
+    }
+  }
+
   const onStop = () => {
     stopSilentAudio()
     if (pipUpdateIntervalRef.current) {
@@ -879,6 +975,7 @@ function ExpTracker() {
       pipWindowRef.current = null
     }
     setIsRunning(false)
+    setIsPaused(false)
     if (intervalRef.current) clearInterval(intervalRef.current)
     if (timerRef.current) clearInterval(timerRef.current)
     if (ocrRafIdRef.current && videoRef.current?.cancelVideoFrameCallback) {
@@ -903,6 +1000,8 @@ function ExpTracker() {
     else if (action === 'RESET') resetMeasurement()
     else if (action === 'RESELECT') reselectRegion()
     else if (action === 'STOP') stopScreenShare()
+    else if (action === 'PAUSE') onPause()
+    else if (action === 'RESUME') onResume()
   }
   const pipActionRef = useRef(handleAction)
   pipActionRef.current = handleAction
@@ -913,6 +1012,7 @@ function ExpTracker() {
     if (intervalRef.current) clearInterval(intervalRef.current)
     if (timerRef.current) clearInterval(timerRef.current)
     setIsRunning(false)
+    setIsPaused(false)
     setStartTime(null)
     setStartExp(null)
     setElapsedSec(0)
@@ -1181,7 +1281,6 @@ function ExpTracker() {
             <button type="button" id="pip-btn-start" class="pip-btn primary">측정 시작</button>
           </div>
           <div class="pip-actions">
-            <button type="button" id="pip-btn-reselect" class="pip-btn secondary">영역 다시 찾기</button>
             <button type="button" id="pip-btn-reset" class="pip-btn danger">처음부터 다시 측정</button>
             <button type="button" id="pip-btn-stop" class="pip-btn secondary">중지</button>
           </div>
@@ -1189,6 +1288,7 @@ function ExpTracker() {
         <div id="pip-stats" style="display:none;">
           <div class="pip-brand">https://MaplelandTracker.gg</div>
           <div class="pip-title">경험치 측정기</div>
+          <div id="pip-paused-hint" style="display:none; font-size:12px; color:#94a3b8; margin-bottom:8px;">일시정지 중</div>
           <div id="pip-elapsed" class="pip-stats-line">
             <span class="pip-stats-label">경과</span>
             <span class="pip-stats-value">0:00</span>
@@ -1202,7 +1302,7 @@ function ExpTracker() {
             <span class="pip-stats-value">-</span>
           </div>
           <div class="pip-actions pip-actions--stats">
-            <button type="button" id="pip-btn-reselect-run" class="pip-btn secondary">영역 다시 찾기</button>
+            <button type="button" id="pip-btn-pause" class="pip-btn secondary">일시정지</button>
             <button type="button" id="pip-btn-stop-run" class="pip-btn danger">중지</button>
           </div>
           <div class="pip-milestones">
@@ -1243,9 +1343,7 @@ function ExpTracker() {
     win.document.getElementById('pip-btn-ok').onclick = () => sendAction('OK')
     win.document.getElementById('pip-btn-start').onclick = () => sendAction('START')
     win.document.getElementById('pip-btn-reset').onclick = () => sendAction('RESET')
-    win.document.getElementById('pip-btn-reselect').onclick = () => sendAction('RESELECT')
     win.document.getElementById('pip-btn-stop').onclick = () => sendAction('STOP')
-    win.document.getElementById('pip-btn-reselect-run').onclick = () => sendAction('RESELECT')
     win.document.getElementById('pip-btn-stop-run').onclick = () => sendAction('STOP')
 
     const fitPipWindow = () => {
@@ -1275,6 +1373,7 @@ function ExpTracker() {
         if (opts?.disabled !== undefined) el.disabled = opts.disabled
         if (opts?.show !== undefined) el.style.display = opts.show ? 'block' : 'none'
         if (opts?.text) el.textContent = opts.text
+        if (opts?.className !== undefined) el.className = opts.className
       }
       const stepPanel = doc.getElementById('pip-step-panel')
       const statsPanel = doc.getElementById('pip-stats')
@@ -1299,9 +1398,17 @@ function ExpTracker() {
           const val = gainedEl.querySelector('.pip-stats-value')
           if (val) val.textContent = `${(s.expGained ?? 0).toLocaleString()}`
         }
-        // EXP/h는 PIP에서 표시하지 않음
+        // EXP/h는 PIP에서 표시하지 않음. 일시정지/재개 버튼은 본체와 동일: 문구·스타일 토글
+        setBtn('pip-btn-pause', {
+          show: !!ps.stream,
+          text: ps.isPaused ? '▶ 재개' : '⏸ 일시정지',
+          className: ps.isPaused ? 'pip-btn primary' : 'pip-btn secondary',
+        })
+        const pauseBtn = doc.getElementById('pip-btn-pause')
+        if (pauseBtn) pauseBtn.onclick = () => sendAction(pipPauseResumeActionRef.current)
+        const pipPausedHint = doc.getElementById('pip-paused-hint')
+        if (pipPausedHint) pipPausedHint.style.display = ps.isPaused ? 'block' : 'none'
         setBtn('pip-btn-stop-run', { show: !!ps.stream, disabled: !ps.stream })
-        setBtn('pip-btn-reselect-run', { show: !!ps.stream, disabled: !ps.stream || !!ps.isDetecting })
         const checkpoints = [300, 600, 1800, 3600]
         const elapsed = s.elapsedSec ?? 0
         const secLabel = { 300: '5분', 600: '10분', 1800: '30분', 3600: '1시간' }
@@ -1331,7 +1438,6 @@ function ExpTracker() {
         setBtn('pip-btn-ok', { disabled: !ps.canOk, show: ps.currentExp != null && !ps.showStart })
         setBtn('pip-btn-start', { disabled: !canStart, show: canStart })
         setBtn('pip-btn-reset', { disabled: !(ps.confirmedExp != null && !ps.isRunning), show: ps.confirmedExp != null && !ps.isRunning })
-        setBtn('pip-btn-reselect', { disabled: !ps.stream || !!ps.isDetecting, show: !!ps.stream })
         setBtn('pip-btn-stop', { disabled: !ps.stream, show: !!ps.stream })
       }
       fitPipWindow()
@@ -1370,7 +1476,7 @@ function ExpTracker() {
 
   useEffect(() => {
     if (pipUpdateNowRef.current) pipUpdateNowRef.current()
-  }, [elapsedSec, currentExp, currentExpPercent, expGained, expPerHour, isRunning])
+  }, [elapsedSec, currentExp, currentExpPercent, expGained, expPerHour, isRunning, isPaused])
 
   // 마일스톤(5분/10분/30분/1시간) 예상 EXP 스냅샷 고정
   useEffect(() => {
@@ -1452,11 +1558,13 @@ function ExpTracker() {
       currentExp,
       confirmedExp,
       isRunning,
+      isPaused,
       elapsedSec: latestStatsRef.current.elapsedSec ?? 0,
       expPerHour: latestStatsRef.current.expPerHour ?? 0,
       expGained: latestStatsRef.current.expGained ?? 0,
     }
-  }, [stream, showSnapshot, showStart, selection, currentExp, confirmedExp, isRunning, isReading, isDetecting])
+    pipPauseResumeActionRef.current = isPaused ? 'RESUME' : 'PAUSE'
+  }, [stream, showSnapshot, showStart, selection, currentExp, confirmedExp, isRunning, isPaused, isReading, isDetecting])
 
   const formatTime = (sec) => {
     const h = Math.floor(sec / 3600)
@@ -1619,6 +1727,9 @@ function ExpTracker() {
         <div className="exp-tracker-stats">
           <div className="exp-tracker-brand">https://MaplelandTracker.gg</div>
           <div className="exp-tracker-title">경험치 측정기</div>
+          {isPaused && (
+            <p className="exp-tracker-hint" style={{ marginBottom: 8 }}>일시정지 중</p>
+          )}
           <div className="exp-tracker-stat-line">
             <span className="exp-tracker-stat-label">경과</span>
             <span className="exp-tracker-stat-value">{formatTime(elapsedSec)}</span>
@@ -1717,6 +1828,14 @@ function ExpTracker() {
                 })()}
               </span>
             </div>
+          </div>
+          <div className="exp-tracker-actions exp-tracker-actions--secondary" style={{ marginTop: 12, flexWrap: 'wrap', gap: 8 }}>
+            {isPaused ? (
+              <button type="button" className="exp-tracker-btn primary" onClick={onResume}>▶ 재개</button>
+            ) : (
+              <button type="button" className="exp-tracker-btn secondary" onClick={onPause}>⏸ 일시정지</button>
+            )}
+            <button type="button" className="exp-tracker-btn danger" onClick={onStop}>측정 중지</button>
           </div>
         </div>
       )}
