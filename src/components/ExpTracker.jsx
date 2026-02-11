@@ -41,6 +41,7 @@ function ExpTracker() {
   const [stream, setStream] = useState(null)
   const [error, setError] = useState(null)
   const [videoVisibleForCapture, setVideoVisibleForCapture] = useState(false) // 캡처 직전에만 잠깐 표시 (검은 화면 방지)
+  const [showShareGuideModal, setShowShareGuideModal] = useState(false) // 화면 공유 전 안내 팝업
   const videoRef = useRef(null)
   const overlayCanvasRef = useRef(null)
 
@@ -185,13 +186,6 @@ function ExpTracker() {
       } catch (_) {
         mediaStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false })
       }
-      // [주석 처리] 메이플스토리 월드에서만 측정 가능하도록 제한
-      // const trackLabel = mediaStream.getVideoTracks()[0]?.label ?? ''
-      // if (!trackLabel.includes('MapleStory Worlds')) {
-      //   mediaStream.getTracks().forEach((t) => t.stop())
-      //   setError('메이플스토리 월드에서만 측정할 수 있습니다. 공유할 창에서 "MapleStory Worlds"를 선택해 주세요.')
-      //   return
-      // }
       setStream(mediaStream)
       if (videoRef.current) {
         videoRef.current.srcObject = mediaStream
@@ -1653,9 +1647,45 @@ function ExpTracker() {
         <h2>경험치 트래커</h2>
         <p className="exp-tracker-desc">화면을 공유하고 몇 번만 클릭하면 시간당 EXP를 자동으로 계산합니다.</p>
         {error && <p className="exp-tracker-error">{error}</p>}
-        <button type="button" className="exp-tracker-btn primary" onClick={startScreenShare}>
+        <button type="button" className="exp-tracker-btn primary" onClick={() => setShowShareGuideModal(true)}>
           화면 공유 시작
         </button>
+
+        {showShareGuideModal && (
+          <div className="exp-tracker-modal-overlay" onClick={() => setShowShareGuideModal(false)} aria-hidden="false">
+            <div className="exp-tracker-modal" onClick={(e) => e.stopPropagation()}>
+              <p className="exp-tracker-modal-title">화면 공유 안내</p>
+              <p className="exp-tracker-modal-body">
+                1. Window 탭 이동<br />2. MapleStory Worlds 선택
+              </p>
+              <div className="exp-tracker-modal-actions">
+                <button type="button" className="exp-tracker-btn secondary" onClick={() => setShowShareGuideModal(false)}>
+                  취소
+                </button>
+                <button
+                  type="button"
+                  className="exp-tracker-btn primary"
+                  onClick={() => {
+                    setShowShareGuideModal(false)
+                    startScreenShare()
+                  }}
+                >
+                  확인
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        <div className="exp-tracker-assurance">
+          <p className="exp-tracker-assurance-title">안심하고 이용하세요</p>
+          <ul className="exp-tracker-assurance-list">
+            <li>이 사이트는 <strong>서버에 데이터를 절대 저장하지 않습니다.</strong> 경험치 측정은 모두 사용자 기기에서만 처리됩니다.</li>
+            <li>화면 공유는 <strong>보여주기만</strong> 하며, 키보드·마우스 조작 권한을 요구하거나 가질 수 없습니다.</li>
+            <li>공유할 화면·창은 <strong>브라우저가 묻는 대로 사용자가 직접 선택</strong>하며, 언제든 중지할 수 있습니다.</li>
+          </ul>
+        </div>
+        <p className="exp-tracker-test-badge">1.0 version(test)</p>
       </section>
     )
   }

@@ -66,6 +66,104 @@
   margin-top: 1.75rem;
 }
 
+/* 화면 공유 전 안내 팝업 */
+.exp-tracker-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.6);
+  padding: 1rem;
+}
+
+.exp-tracker-modal {
+  max-width: 360px;
+  width: 100%;
+  padding: 1.5rem;
+  border-radius: 14px;
+  background: #1e293b;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  box-shadow: 0 25px 50px rgba(0, 0, 0, 0.5);
+}
+
+.exp-tracker-modal .exp-tracker-modal-title {
+  margin: 0 0 1rem;
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: #b84040 !important;
+  text-align: center;
+}
+
+.exp-tracker-modal-body {
+  margin: 0 0 2rem;
+  font-size: 0.9rem;
+  line-height: 1.55;
+  color: #94a3b8;
+  text-align: center;
+}
+
+.exp-tracker-modal-body strong {
+  color: #cbd5e1;
+}
+
+.exp-tracker-modal-actions {
+  margin-top: 1.5rem;
+  display: flex;
+  gap: 0.75rem;
+  justify-content: center;
+}
+
+/* 화면 공유 시작 아래 안내 (보안·권한 안심 문구) */
+.exp-tracker-assurance {
+  margin-top: 2rem;
+  margin-left: auto;
+  margin-right: auto;
+  max-width: 420px;
+  padding: 1rem 1.25rem;
+  border-radius: 12px;
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  text-align: left;
+}
+
+.exp-tracker-assurance .exp-tracker-assurance-title {
+  margin: 0 0 1.5rem;
+  font-size: 1.15rem;
+  font-weight: 600;
+  text-align: center;
+  color: #b84040 !important;
+}
+
+.exp-tracker-assurance-list {
+  margin: 1.5rem 0 0;
+  padding-left: 1.25rem;
+  font-size: 0.8125rem;
+  line-height: 1.65;
+  color: #94a3b8;
+}
+
+.exp-tracker-assurance-list li {
+  margin-bottom: 0.5rem;
+}
+
+.exp-tracker-assurance-list li:last-child {
+  margin-bottom: 0;
+}
+
+.exp-tracker-assurance-list strong {
+  color: #cbd5e1;
+}
+
+.exp-tracker-test-badge {
+  margin-top: 4rem;
+  margin-bottom: 0;
+  font-size: 0.75rem;
+  color: #64748b;
+  text-align: center;
+}
+
 /* 공유 화면 기본: 화면 밖 + 숨김. 크기는 1280x720으로 해서 고해상도 캡처 가능 */
 .exp-tracker-video-wrap {
   position: fixed;
