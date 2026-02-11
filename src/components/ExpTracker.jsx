@@ -7,8 +7,9 @@
  * - 프리셋 영역: 비율/해상도가 고정이면 경험치 위치를 미리 정의해 두고, 네모 그리기 생략 가능
  */
 import { useState, useRef, useEffect } from 'react'
-import Tesseract from 'tesseract.js'
 import './ExpTracker.css'
+
+// Tesseract는 지연 로딩 (import('tesseract.js')) — 초기 번들·로딩 경감
 
 /**
  * "23,456,789[45.03%]" 형태에서
@@ -94,6 +95,12 @@ function ExpTracker() {
   const ocrRafIdRef = useRef(null)
   // 크롭 캔버스 캐시 (aprud.me cropRegion 캐시 — 메모리·성능)
   const cropCanvasCacheRef = useRef(new Map())
+  // OCR 리사이즈용 캔버스 캐시 (MAX_OCR_PX 기준 small 캔버스, 크기별 재사용)
+  const ocrResizeCanvasCacheRef = useRef(new Map())
+  const OCR_RESIZE_CACHE_MAX = 3
+  // Tesseract 지연 로딩 + 워커 재사용
+  const tesseractModuleRef = useRef(null)
+  const tesseractWorkerRef = useRef(null)
   // PIP 창에 표시할 단계/버튼 상태 (PIP이 먼저 열려도 단계별 UI 표시)
   const pipStateRef = useRef({ step: 2, hint: '', canReadExp: false, canOk: false, canStart: false, currentExp: null, confirmedExp: null, isRunning: false })
   // PIP 일시정지 버튼: 클릭 시점에 이 ref를 읽어 PAUSE/RESUME 전달 (타이밍 이슈 방지)
@@ -153,6 +160,18 @@ function ExpTracker() {
       if (timerRef.current) clearInterval(timerRef.current)
     }
   }, [stream])
+
+  // 언마운트 시 OCR 워커 정리
+  useEffect(() => {
+    return () => {
+      if (tesseractWorkerRef.current) {
+        try {
+          tesseractWorkerRef.current.terminate()
+        } catch (_) {}
+        tesseractWorkerRef.current = null
+      }
+    }
+  }, [])
 
   // 1번: 화면 공유 시작
   const startScreenShare = async () => {
@@ -246,6 +265,7 @@ function ExpTracker() {
       }
     })
     cropCanvasCacheRef.current.clear()
+    ocrResizeCanvasCacheRef.current.clear()
     setSelection(null)
     setCurrentExp(null)
     setCurrentExpPercent(null)
@@ -254,6 +274,32 @@ function ExpTracker() {
     setIsRunning(false)
     if (intervalRef.current) clearInterval(intervalRef.current)
     if (timerRef.current) clearInterval(timerRef.current)
+    terminateOcrWorker()
+  }
+
+  const getTesseract = async () => {
+    if (tesseractModuleRef.current) return tesseractModuleRef.current
+    const Tesseract = (await import('tesseract.js')).default
+    tesseractModuleRef.current = Tesseract
+    return Tesseract
+  }
+
+  const ensureOcrWorker = async () => {
+    if (tesseractWorkerRef.current) return tesseractWorkerRef.current
+    const Tesseract = await getTesseract()
+    const worker = await Tesseract.createWorker('eng', 1, { logger: () => {} })
+    await worker.initialize('eng')
+    tesseractWorkerRef.current = worker
+    return worker
+  }
+
+  const terminateOcrWorker = () => {
+    if (tesseractWorkerRef.current) {
+      try {
+        tesseractWorkerRef.current.terminate()
+      } catch (_) {}
+      tesseractWorkerRef.current = null
+    }
   }
 
   // 화면 공유 시 하단 영역·가운데 1/3만 캡처. 저해상도에서는 영역 넓히고 스냅샷 확대해 OCR 인식률 확보
@@ -408,15 +454,15 @@ function ExpTracker() {
     const snap = snapshotCanvasRef.current
     const video = videoRef.current
     if (snap && snap.width > 0 && snap.height > 0) {
-      const cw = snap.width
-      const ch = snap.height
+      const worker = await ensureOcrWorker()
       const runOcr = (source) =>
-        Tesseract.recognize(source, 'eng', {
-          logger: () => {},
+        worker.recognize(source, {
           tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,[]% ',
           tessedit_pageseg_mode: 6,
         }).then((r) => r.data?.words ?? [])
 
+      const cw = snap.width
+      const ch = snap.height
       let words = await runOcr(snap)
       let scale = 1
       if (words.length === 0 && (cw < 400 || ch < 60)) {
@@ -495,8 +541,8 @@ function ExpTracker() {
     crop.width = vw
     crop.height = cropH
     crop.getContext('2d').drawImage(video, 0, cropY, vw, cropH, 0, 0, vw, cropH)
-    const { data } = await Tesseract.recognize(crop, 'eng', {
-      logger: () => {},
+    const worker = await ensureOcrWorker()
+    const { data } = await worker.recognize(crop, {
       tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,[]% ',
       tessedit_pageseg_mode: 6,
     })
@@ -633,22 +679,36 @@ function ExpTracker() {
       if (!crop) return null
     }
 
-    // 2) OCR 입력: 화질이 너무 낮으면 인식 실패하므로 최대 400px까지 유지
+    // 2) OCR 입력: 화질이 너무 낮으면 인식 실패하므로 최대 400px까지 유지 (리사이즈 캔버스 캐시)
     const MAX_OCR_PX = 400
     let src = crop
     if (sw > MAX_OCR_PX || sh > MAX_OCR_PX) {
       const r = Math.min(MAX_OCR_PX / sw, MAX_OCR_PX / sh)
       const smallW = Math.round(sw * r)
       const smallH = Math.round(sh * r)
-      const small = document.createElement('canvas')
-      small.width = smallW
-      small.height = smallH
-      small.getContext('2d').drawImage(crop, 0, 0, sw, sh, 0, 0, smallW, smallH)
-      src = small
+      const cacheKey = `ocr_${smallW}_${smallH}`
+      const cache = ocrResizeCanvasCacheRef.current
+      let cached = cache.get(cacheKey)
+      if (!cached?.canvas) {
+        if (cache.size >= OCR_RESIZE_CACHE_MAX) {
+          const firstKey = cache.keys().next().value
+          if (firstKey != null) cache.delete(firstKey)
+        }
+        cached = {
+          canvas: document.createElement('canvas'),
+          ctx: null,
+        }
+        cached.canvas.width = smallW
+        cached.canvas.height = smallH
+        cached.ctx = cached.canvas.getContext('2d')
+        cache.set(cacheKey, cached)
+      }
+      cached.ctx.drawImage(crop, 0, 0, sw, sh, 0, 0, smallW, smallH)
+      src = cached.canvas
     }
 
-    const { data: { text } } = await Tesseract.recognize(src, 'eng', {
-      logger: () => {},
+    const worker = await ensureOcrWorker()
+    const { data: { text } } = await worker.recognize(src, {
       tessedit_char_whitelist: '0123456789.,[]%',
       tessedit_pageseg_mode: 7, // PSM 7 = 한 줄, 인식 속도 향상
     })
@@ -1899,7 +1959,7 @@ function ExpTracker() {
             ) : (
               <button type="button" className="exp-tracker-btn secondary" onClick={onPause}>⏸ 일시정지</button>
             )}
-            <button type="button" className="exp-tracker-btn danger" onClick={onStop}>측정 중지</button>
+            <button type="button" className="exp-tracker-btn danger" onClick={stopScreenShare}>측정 중지</button>
           </div>
         </div>
       )}
