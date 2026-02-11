@@ -4,6 +4,18 @@ maplelandtracker.gg · 경험치 측정 등 메이플랜드 보조 기능을 제
 
 ---
 
+## 주요 기능
+
+- **화면 공유** → 게임 화면 스트림 획득
+- **영역 지정** → 경험치가 보이는 구역을 드래그로 선택 (자동 감지 지원)
+- **OCR 측정** → 선택 영역을 Tesseract.js로 읽어 경험치·진행률 파싱
+- **실시간 측정** → 경과 시간, 획득 경험치, EXP/h, 5·10·30·60분 구간 표시
+- **PIP 모드** → 작은 창에서도 측정 조작·확인 가능
+- **일시정지/재개** → 타이머·OCR 중단 후 이어서 측정
+- **일시정지 중 경험치** → 재개 시 일시정지 동안 오른 경험치는 현재 옆 (+N)으로만 표시, 획득·EXP/h에서 제외
+
+---
+
 ## 실행 방법
 
 ### 1. 의존성 설치 (최초 1회)
@@ -49,20 +61,20 @@ npm run preview
 ## 프로젝트 구조 (프론트 초보용 설명)
 
 ```
-MaplelandTracker/
-├── index.html          # 브라우저가 처음 열 때 보는 HTML. <div id="root"> 와 main.jsx 로딩만 함
-├── package.json        # 프로젝트 이름, 스크립트(npm run dev 등), 의존성 목록
-├── vite.config.js      # Vite(빌드 도구) 설정. React 플러그인 등
-├── public/             # 그대로 복사되는 정적 파일 (favicon.svg 등)
+maplelandtracker/
+├── index.html          # 진입 HTML. <div id="root"> + main.jsx 로딩
+├── package.json        # 스크립트(npm run dev 등), 의존성 목록
+├── vite.config.js      # Vite 설정
+├── public/             # 정적 파일 (favicon.svg 등)
 ├── src/
-│   ├── main.jsx        # 진입점. index.html → main.jsx → React 앱을 #root 에 그림
-│   ├── App.jsx         # 루트 컴포넌트. 헤더 + 메인 영역 구조
-│   ├── App.css         # App.jsx 전용 스타일
-│   ├── index.css       # 전역 스타일 (body, #root 등)
-│   └── components/     # 재사용할 UI 조각들
-│       └── ExpTracker.jsx   # 경험치 측정 영역 (예정)
-├── exp-measure-feature.md   # 경험치 측정 기능 설계 정리
-└── README.md           # 이 파일
+│   ├── main.jsx        # 진입점. React 앱을 #root 에 마운트
+│   ├── App.jsx         # 루트 컴포넌트
+│   ├── App.css, index.css
+│   └── components/
+│       ├── ExpTracker.jsx   # 경험치 측정 (화면 공유, OCR, PIP, 일시정지 등)
+│       └── ExpTracker.css
+├── exp-tracker-steps.md    # 구현 단계 체크리스트 (완료)
+└── README.md
 ```
 
 ### 흐름 요약
@@ -90,5 +102,15 @@ MaplelandTracker/
 - **React 18** (UI 라이브러리)
 - **Vite** (개발 서버 + 빌드)
 - **JavaScript (JSX)** — 나중에 TypeScript로 바꿀 수 있음
+
+---
+
+## 개발 백로그 (선택)
+
+- 해상도 제한 안내, OCR·캡처 최적화
+- 5/10/30/60분 구간 UI 개선, 캡처 애니메이션
+- 프리셋 영역(해상도별 자동 영역), 단축키 등
+
+---
 
 이제 `npm install` 후 `npm run dev` 로 실행해 보시면 됩니다.
