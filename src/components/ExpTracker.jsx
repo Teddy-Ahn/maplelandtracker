@@ -70,8 +70,11 @@ function ExpTracker() {
   const [elapsedSec, setElapsedSec] = useState(0)
   const [expGained, setExpGained] = useState(0)
   const [expPerHour, setExpPerHour] = useState(0)
+  const [totalExpGainedDuringPause, setTotalExpGainedDuringPause] = useState(0) // 일시정지 중 오른 경험치(획득에서 제외, 현재 옆에 +N 표시)
   const [milestoneExp, setMilestoneExp] = useState({ 300: null, 600: null, 1800: null, 3600: null })
   const intervalRef = useRef(null)
+  const latestCurrentExpRef = useRef(null)
+  const pausedAtExpRef = useRef(null) // 일시정지 시점의 currentExp (재개 시 비교용)
   const timerRef = useRef(null)
   const captureDisplaySizeRef = useRef(null)
   // 탭 전환 후에도 측정 유지: 무음 재생으로 백그라운드 탭 스로틀 완화
@@ -811,6 +814,8 @@ function ExpTracker() {
     setElapsedSec(0)
     setExpGained(0)
     setExpPerHour(0)
+    setTotalExpGainedDuringPause(0)
+    pausedAtExpRef.current = null
     // PIP 즉시 반영용 (렌더 전이라도 화면 전환)
     pipStateRef.current = {
       ...pipStateRef.current,
@@ -895,6 +900,11 @@ function ExpTracker() {
     }
     ocrLoopRunningRef.current = false
     setIsPaused(true)
+    pausedAtExpRef.current = latestCurrentExpRef.current ?? null // 재개 시 일시정지 중 오른 경험치 계산용
+    // PIP에서 버튼이 즉시 "재개"로 바뀌도록 ref·PIP 동기 갱신
+    pipStateRef.current = { ...pipStateRef.current, isPaused: true }
+    pipPauseResumeActionRef.current = 'RESUME'
+    if (pipUpdateNowRef.current) pipUpdateNowRef.current()
   }
 
   const onResume = () => {
@@ -910,6 +920,11 @@ function ExpTracker() {
     ocrLoopRunningRef.current = false
 
     setIsPaused(false)
+    // PIP에서 버튼이 즉시 "일시정지"로 바뀌도록 ref·PIP 동기 갱신
+    pipStateRef.current = { ...pipStateRef.current, isPaused: false }
+    pipPauseResumeActionRef.current = 'PAUSE'
+    if (pipUpdateNowRef.current) pipUpdateNowRef.current()
+
     const tick = () => setElapsedSec((s) => s + 1)
     timerRef.current = setInterval(tick, 1000)
 
@@ -991,6 +1006,8 @@ function ExpTracker() {
     setElapsedSec(0)
     setExpGained(0)
     setExpPerHour(0)
+    setTotalExpGainedDuringPause(0)
+    pausedAtExpRef.current = null
   }
 
   const handleAction = (action) => {
@@ -1018,6 +1035,8 @@ function ExpTracker() {
     setElapsedSec(0)
     setExpGained(0)
     setExpPerHour(0)
+    setTotalExpGainedDuringPause(0)
+    pausedAtExpRef.current = null
     setMilestoneExp({ 300: null, 600: null, 1800: null, 3600: null })
     setCurrentExp(null)
     setCurrentExpPercent(null)
@@ -1391,7 +1410,8 @@ function ExpTracker() {
         const expEl = doc.getElementById('pip-exp')
         if (expEl) {
           const val = expEl.querySelector('.pip-stats-value')
-          if (val) val.textContent = `${s.currentExp != null ? s.currentExp.toLocaleString() : '-'}${s.currentExpPercent != null ? ` [${s.currentExpPercent}%]` : ''}`
+          const pauseGain = s.totalExpGainedDuringPause ?? 0
+          if (val) val.textContent = `${s.currentExp != null ? s.currentExp.toLocaleString() : '-'}${s.currentExpPercent != null ? ` [${s.currentExpPercent}%]` : ''}${pauseGain > 0 ? ` (+${pauseGain.toLocaleString()})` : ''}`
         }
         const gainedEl = doc.getElementById('pip-gained')
         if (gainedEl) {
@@ -1462,13 +1482,24 @@ function ExpTracker() {
     })
   }
 
-  // 실시간 경험치/EXP per hour 갱신 (isRunning일 때 currentExp가 바뀔 때마다)
+  // 실시간 경험치/EXP per hour 갱신. 일시정지 중 오른 경험치는 totalExpGainedDuringPause로 빼서 표시.
   useEffect(() => {
     if (!isRunning || startTime == null || startExp == null || currentExp == null) return
-    setExpGained(currentExp - startExp)
+    latestCurrentExpRef.current = currentExp
+
+    let totalPaused = totalExpGainedDuringPause
+    if (pausedAtExpRef.current != null) {
+      const delta = Math.max(0, currentExp - pausedAtExpRef.current)
+      totalPaused += delta
+      setTotalExpGainedDuringPause((prev) => prev + delta)
+      pausedAtExpRef.current = null
+    }
+
+    const gained = currentExp - startExp - totalPaused
+    setExpGained(gained)
     const sec = elapsedSec || 1
-    setExpPerHour(Math.round((currentExp - startExp) / (sec / 3600)))
-  }, [isRunning, startTime, startExp, currentExp, elapsedSec])
+    setExpPerHour(Math.round(gained / (sec / 3600)))
+  }, [isRunning, startTime, startExp, currentExp, elapsedSec, totalExpGainedDuringPause])
 
   useEffect(() => {
     milestoneExpRef.current = milestoneExp
@@ -1476,7 +1507,7 @@ function ExpTracker() {
 
   useEffect(() => {
     if (pipUpdateNowRef.current) pipUpdateNowRef.current()
-  }, [elapsedSec, currentExp, currentExpPercent, expGained, expPerHour, isRunning, isPaused])
+  }, [elapsedSec, currentExp, currentExpPercent, expGained, expPerHour, isRunning, isPaused, totalExpGainedDuringPause])
 
   // 마일스톤(5분/10분/30분/1시간) 예상 EXP 스냅샷 고정
   useEffect(() => {
@@ -1499,21 +1530,23 @@ function ExpTracker() {
     })
   }, [isRunning, elapsedSec, expPerHour])
 
-  // PIP 창 갱신용: 측정 중일 때 최신 수치를 ref에 동기화
+  // PIP 창 갱신용: 측정 중일 때 최신 수치를 ref에 동기화 (일시정지 중 오른 경험치 제외한 획득)
   useEffect(() => {
     if (!isRunning) return
+    const gained = startExp != null && currentExp != null ? currentExp - startExp - totalExpGainedDuringPause : 0
     const expPerHourVal = elapsedSec >= 1 && startExp != null && currentExp != null
-      ? Math.round((currentExp - startExp) / (elapsedSec / 3600))
+      ? Math.round(gained / (elapsedSec / 3600))
       : 0
     latestStatsRef.current = {
       elapsedSec,
       startExp,
       currentExp,
       currentExpPercent: currentExpPercent ?? null,
-      expGained: startExp != null && currentExp != null ? currentExp - startExp : 0,
+      expGained: gained,
       expPerHour: expPerHourVal,
+      totalExpGainedDuringPause,
     }
-  }, [isRunning, elapsedSec, startExp, currentExp, currentExpPercent])
+  }, [isRunning, elapsedSec, startExp, currentExp, currentExpPercent, totalExpGainedDuringPause])
 
   useEffect(() => {
     const msgHandler = (e) => {
@@ -1738,6 +1771,7 @@ function ExpTracker() {
             <span className="exp-tracker-stat-label">현재</span>
             <span className="exp-tracker-stat-value">
               {currentExp?.toLocaleString() ?? '-'}{currentExpPercent != null ? ` [${currentExpPercent}%]` : ''}
+              {totalExpGainedDuringPause > 0 && ` (+${totalExpGainedDuringPause.toLocaleString()})`}
             </span>
           </div>
           <div className="exp-tracker-stat-line exp-tracker-stat-highlight">
