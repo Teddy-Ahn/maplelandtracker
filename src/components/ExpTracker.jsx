@@ -1718,6 +1718,10 @@ function ExpTracker() {
               <p className="exp-tracker-modal-body">
                 1. Window 탭 이동<br />2. MapleStory Worlds 선택
               </p>
+              <div className="exp-tracker-modal-note">
+                <p>공유한 화면은 누구도 볼 수 없습니다.</p>
+                <p>제작자인 저도 볼 수 없습니다.</p>
+              </div>
               <div className="exp-tracker-modal-actions">
                 <button type="button" className="exp-tracker-btn secondary" onClick={() => setShowShareGuideModal(false)}>
                   취소

@@ -97,7 +97,7 @@
 }
 
 .exp-tracker-modal-body {
-  margin: 0 0 2rem;
+  margin: 0 0 0.25rem;
   font-size: 0.9rem;
   line-height: 1.55;
   color: #94a3b8;
@@ -106,6 +106,30 @@
 
 .exp-tracker-modal-body strong {
   color: #cbd5e1;
+}
+
+.exp-tracker-modal-note {
+  margin: 1.5rem 0 0;
+  padding: 0.75rem 1rem;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  text-align: center;
+  border: 1px solid rgba(184, 64, 64, 0.5);
+  border-radius: 8px;
+  background: rgba(184, 64, 64, 0.08);
+}
+
+.exp-tracker-modal .exp-tracker-modal-note,
+.exp-tracker-modal .exp-tracker-modal-note p {
+  color: #b84040 !important;
+}
+
+.exp-tracker-modal-note p {
+  margin: 0 0 0.2rem;
+}
+
+.exp-tracker-modal-note p:last-child {
+  margin-bottom: 0;
 }
 
 .exp-tracker-modal-actions {
